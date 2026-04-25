@@ -191,38 +191,64 @@
 </div>
 
 <script>
-  let state = {
+  // ЗАПОМИНАНИЕ: Загрузка состояния из LocalStorage или создание нового
+  const savedState = localStorage.getItem('gemstock_state');
+  let state = savedState ? JSON.parse(savedState) : {
     balance: 10000.00,
     side: 'buy',
-    activeGem: null,
+    activeSym: 'GEM',
     portfolio: {},
     history: []
   };
 
   const gems = [
-    { name: 'Gemcoin', sym: 'GEM', price: 250.40, ch: 2.4, color: '#007AFF', candles: [] },
-    { name: 'Aether', sym: 'AET', price: 42.10, ch: -0.8, color: '#AF52DE', candles: [] },
-    { name: 'Solstice', sym: 'SOL', price: 89.20, ch: 1.1, color: '#FF9500', candles: [] },
-    { name: 'Nebula', sym: 'NEB', price: 0.0054, ch: 18.2, color: '#34C759', candles: [] }
+    { name: 'Gemcoin', sym: 'GEM', price: 250.40, ch: 2.4, color: '#007AFF', candles: [], mcap: 500000 },
+    { name: 'Aether', sym: 'AET', price: 42.10, ch: -0.8, color: '#AF52DE', candles: [], mcap: 200000 },
+    { name: 'Solstice', sym: 'SOL', price: 89.20, ch: 1.1, color: '#FF9500', candles: [], mcap: 150000 },
+    { name: 'Nebula', sym: 'NEB', price: 0.0054, ch: 18.2, color: '#34C759', candles: [], mcap: 50000 }
   ];
+
+  // Ищем активный гем по символу
+  let currentGem = gems.find(g => g.sym === state.activeSym) || gems[0];
 
   const canvas = document.getElementById('candleChart');
   const ctx = canvas.getContext('2d');
 
+  function saveState() {
+    state.activeSym = currentGem.sym;
+    localStorage.setItem('gemstock_state', JSON.stringify(state));
+    // Сохраняем свечи отдельно, чтобы график "помнил" историю
+    localStorage.setItem('gemstock_candles', JSON.stringify(gems.map(g => ({ sym: g.sym, candles: g.candles }))));
+  }
+
   function init() {
-    // Убираем оверлей после первичной настройки
+    // Загрузка сохраненных свечей
+    const savedCandles = localStorage.getItem('gemstock_candles');
+    const parsedCandles = savedCandles ? JSON.parse(savedCandles) : [];
+
+    gems.forEach(g => {
+      const saved = parsedCandles.find(sc => sc.sym === g.sym);
+      if (saved && saved.candles.length > 0) {
+        g.candles = saved.candles;
+        g.price = g.candles[g.candles.length - 1].close;
+      } else {
+        generateHistory(g);
+      }
+    });
+
     setTimeout(() => {
-      selectGem('GEM');
+      selectGem(currentGem.sym);
       document.getElementById('loading-overlay').style.opacity = '0';
       setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 500);
     }, 1200);
 
     updateTicker();
-    setInterval(marketLogic, 2000);
+    setInterval(marketLogic, 2500);
     startChartEngine();
+    renderHistory();
+    document.getElementById('total-balance').innerText = "$" + state.balance.toLocaleString();
   }
 
-  // ФИКС БАГА: Генерация истории теперь бесшовная
   function generateHistory(gem) {
     gem.candles = [];
     let currentPrice = gem.price * (1 - (Math.random() * 0.1)); 
@@ -237,122 +263,156 @@
     gem.price = currentPrice; 
   }
 
-  // ФИКС БАГА: Логика рынка теперь привязана к последней точке закрытия
   function marketLogic() {
     gems.forEach(g => {
       if(g.candles.length === 0) return;
-      
       const lastCandle = g.candles[g.candles.length - 1];
       const volatility = (Math.random() - 0.48) * 0.008; 
-      
-      const open = lastCandle.close; // Новая свеча начинается ровно там, где закрылась старая
+      const open = lastCandle.close;
       const close = open * (1 + volatility);
       const high = Math.max(open, close) + (open * Math.random() * 0.002);
       const low = Math.min(open, close) - (open * Math.random() * 0.002);
-      
       g.price = close;
       g.ch += (volatility * 100);
-      
       g.candles.push({ open, close, high, low });
       if(g.candles.length > 75) g.candles.shift();
     });
-    
     syncUI();
     renderOrderBook();
     updateTicker();
     renderCatalog();
+    saveState();
   }
 
   function syncUI() {
-    if (!state.activeGem) return;
-    const p = state.activeGem.price;
+    const p = currentGem.price;
     document.getElementById('curr-price').innerText = p.toFixed(p < 1 ? 6 : 2);
     document.getElementById('market-display').value = p.toFixed(p < 1 ? 6 : 2) + " USDT";
-    document.getElementById('curr-change').innerText = (state.activeGem.ch >= 0 ? '+' : '') + state.activeGem.ch.toFixed(2) + "%";
-    document.getElementById('curr-price').className = state.activeGem.ch >= 0 ? 'text-up' : 'text-down';
-    document.getElementById('curr-change').className = state.activeGem.ch >= 0 ? 'text-up' : 'text-down';
-    document.getElementById('owned-qty').innerText = `Vault: ${(state.portfolio[state.activeGem.sym] || 0).toFixed(6)} units`;
+    document.getElementById('curr-change').innerText = (currentGem.ch >= 0 ? '+' : '') + currentGem.ch.toFixed(2) + "%";
+    document.getElementById('curr-price').className = currentGem.ch >= 0 ? 'text-up' : 'text-down';
+    document.getElementById('curr-change').className = currentGem.ch >= 0 ? 'text-up' : 'text-down';
+    document.getElementById('owned-qty').innerText = `Vault: ${(state.portfolio[currentGem.sym] || 0).toFixed(6)} units`;
+  }
+
+  function execute() {
+    const amt = parseFloat(document.getElementById('trade-amount').value);
+    if (!amt || amt <= 0) return;
+
+    // ВЛИЯНИЕ НА ЦЕНУ (Impact): Изменение зависит от суммы сделки относительно Капитализации (mcap)
+    const impactFactor = (amt / currentGem.mcap) * 0.5; // Настраиваемый коэффициент "тяжести"
+
+    if (state.side === 'buy') {
+      if (amt > state.balance) return alert("Not enough USDT");
+      state.balance -= amt;
+      state.portfolio[currentGem.sym] = (state.portfolio[currentGem.sym] || 0) + (amt / currentGem.price);
+      
+      // Цена растет
+      currentGem.price *= (1 + impactFactor);
+    } else {
+      const owned = state.portfolio[currentGem.sym] || 0;
+      const qtyToSell = amt / currentGem.price;
+      if (qtyToSell > owned) return alert("Not enough assets");
+      state.balance += amt;
+      state.portfolio[currentGem.sym] -= qtyToSell;
+      
+      // Цена падает
+      currentGem.price *= (1 - impactFactor);
+    }
+    
+    // Мгновенное обновление последней свечи на графике после сделки
+    if(currentGem.candles.length > 0) {
+        currentGem.candles[currentGem.candles.length - 1].close = currentGem.price;
+    }
+
+    state.history.push({ 
+        time: new Date().toLocaleTimeString(), 
+        action: state.side, 
+        asset: currentGem.sym, 
+        amt: amt, 
+        price: currentGem.price 
+    });
+    
+    document.getElementById('total-balance').innerText = "$" + state.balance.toLocaleString();
+    renderHistory();
+    syncUI();
+    saveState();
   }
 
   function startChartEngine() {
     function draw() {
-      if(!state.activeGem || state.activeGem.candles.length === 0) {
+      if(!currentGem || currentGem.candles.length === 0) {
         requestAnimationFrame(draw);
         return;
       }
-      
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.parentElement.getBoundingClientRect();
       canvas.width = rect.width * dpr;
       canvas.height = rect.height * 0.85 * dpr;
       ctx.scale(dpr, dpr);
-      
       const w = rect.width;
       const h = rect.height * 0.85;
-      const data = state.activeGem.candles;
-      
-      // Динамический масштаб, чтобы свечи не улетали за края
+      const data = currentGem.candles;
       const min = Math.min(...data.map(c => c.low)) * 0.998;
       const max = Math.max(...data.map(c => c.high)) * 1.002;
       const range = max - min;
-
       ctx.clearRect(0,0,w,h);
-
-      // Сетка Pro
       ctx.strokeStyle = 'rgba(255,255,255,0.02)';
       for(let i=1; i<8; i++) {
         const y = (h/8) * i;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       }
-
       const candleW = (w / data.length) * 0.7;
       const gap = (w / data.length) * 0.3;
-
       data.forEach((c, i) => {
         const x = i * (candleW + gap);
         const yOpen = h - ((c.open - min) / range) * h;
         const yClose = h - ((c.close - min) / range) * h;
         const yHigh = h - ((c.high - min) / range) * h;
         const yLow = h - ((c.low - min) / range) * h;
-
         const color = c.close >= c.open ? '#0ecb81' : '#f6465d';
         ctx.strokeStyle = color;
         ctx.fillStyle = color;
-
         ctx.beginPath();
         ctx.moveTo(x + candleW/2, yHigh);
         ctx.lineTo(x + candleW/2, yLow);
         ctx.stroke();
         ctx.fillRect(x, Math.min(yOpen, yClose), candleW, Math.max(Math.abs(yClose - yOpen), 1));
       });
-
       requestAnimationFrame(draw);
     }
     draw();
   }
 
   function selectGem(sym) {
-    const overlay = document.getElementById('loading-overlay');
-    overlay.style.display = 'flex';
-    overlay.style.opacity = '1';
-    
-    setTimeout(() => {
-      state.activeGem = gems.find(g => g.sym === sym);
-      generateHistory(state.activeGem);
-      document.getElementById('curr-name').innerText = state.activeGem.sym + "/USDT";
-      document.getElementById('exec-btn').innerText = (state.side === 'buy' ? 'Buy ' : 'Sell ') + state.activeGem.sym;
-      
-      overlay.style.opacity = '0';
-      setTimeout(() => overlay.style.display = 'none', 400);
-      syncUI();
-      renderCatalog();
-    }, 600);
+    currentGem = gems.find(g => g.sym === sym);
+    state.activeSym = sym;
+    document.getElementById('curr-name').innerText = currentGem.sym + "/USDT";
+    document.getElementById('exec-btn').innerText = (state.side === 'buy' ? 'Buy ' : 'Sell ') + currentGem.sym;
+    syncUI();
+    renderCatalog();
+    saveState();
+  }
+
+  function setSide(s, el) {
+    state.side = s;
+    document.querySelectorAll('.t-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    const btn = document.getElementById('exec-btn');
+    btn.style.background = s === 'buy' ? 'var(--up)' : 'var(--down)';
+    btn.innerText = (s === 'buy' ? 'Buy ' : 'Sell ') + currentGem.sym;
+    saveState();
+  }
+
+  function calcQty() {
+    const amt = parseFloat(document.getElementById('trade-amount').value) || 0;
+    const qty = amt / currentGem.price;
+    document.getElementById('exec-qty').innerText = qty.toFixed(6);
   }
 
   function renderCatalog() {
     const container = document.getElementById('asset-catalog');
     container.innerHTML = gems.map(g => `
-      <div class="asset-item ${state.activeGem?.sym === g.sym ? 'active' : ''}" onclick="selectGem('${g.sym}')">
+      <div class="asset-item ${currentGem.sym === g.sym ? 'active' : ''}" onclick="selectGem('${g.sym}')">
         <div>
           <div style="font-weight: 800; font-size: 13px;">${g.sym}/USDT</div>
           <div style="font-size: 10px; color: var(--text-dim);">${g.name}</div>
@@ -368,59 +428,28 @@
   function renderOrderBook() {
     const asks = document.getElementById('ob-asks');
     const bids = document.getElementById('ob-bids');
-    if(!state.activeGem) return;
-    
     let askHtml = '', bidHtml = '';
     for(let i=0; i<6; i++) {
-      const pAsk = state.activeGem.price * (1 + (i+1)*0.001);
-      const pBid = state.activeGem.price * (1 - (i+1)*0.001);
+      const pAsk = currentGem.price * (1 + (i+1)*0.001);
+      const pBid = currentGem.price * (1 - (i+1)*0.001);
       const size = (Math.random() * 2).toFixed(3);
       askHtml = `<div class="ob-row text-down"><div class="ob-bg-down" style="width: ${size*40}%"></div><span>${pAsk.toFixed(4)}</span><span>${size}</span><span style="text-align:right">${(pAsk*size).toFixed(1)}</span></div>` + askHtml;
       bidHtml += `<div class="ob-row text-up"><div class="ob-bg-up" style="width: ${size*40}%"></div><span>${pBid.toFixed(4)}</span><span>${size}</span><span style="text-align:right">${(pBid*size).toFixed(1)}</span></div>`;
     }
     asks.innerHTML = askHtml;
     bids.innerHTML = bidHtml;
-    document.getElementById('ob-mid').innerText = state.activeGem.price.toFixed(4);
+    document.getElementById('ob-mid').innerText = currentGem.price.toFixed(4);
+  }
+
+  function renderHistory() {
+    const body = document.getElementById('h-body');
+    body.innerHTML = state.history.slice(-5).map(h => `<tr><td>${h.time}</td><td class="${h.action === 'buy' ? 'text-up' : 'text-down'}">${h.action.toUpperCase()}</td><td>${h.asset}</td><td>${h.amt.toFixed(2)}</td><td>${h.price.toFixed(2)}</td><td class="text-up">FILLED</td></tr>`).reverse().join('');
   }
 
   function updateTicker() {
     const ticker = document.getElementById('ticker-content');
     const content = gems.map(g => `<span class="ticker-item"><span style="color:var(--text-dim)">${g.sym}</span> <span class="${g.ch >= 0 ? 'text-up' : 'text-down'}">${g.price.toFixed(2)}</span></span>`).join('');
     ticker.innerHTML = content + content;
-  }
-
-  function setSide(s, el) {
-    state.side = s;
-    document.querySelectorAll('.t-tab').forEach(t => t.classList.remove('active'));
-    el.classList.add('active');
-    const btn = document.getElementById('exec-btn');
-    btn.style.background = s === 'buy' ? 'var(--up)' : 'var(--down)';
-    btn.innerText = (s === 'buy' ? 'Buy ' : 'Sell ') + state.activeGem.sym;
-  }
-
-  function execute() {
-    const amt = parseFloat(document.getElementById('trade-amount').value);
-    if (!amt || amt <= 0) return;
-    if (state.side === 'buy') {
-      if (amt > state.balance) return;
-      state.balance -= amt;
-      state.portfolio[state.activeGem.sym] = (state.portfolio[state.activeGem.sym] || 0) + (amt / state.activeGem.price);
-    } else {
-      const qty = amt / state.activeGem.price;
-      if (qty > (state.portfolio[state.activeGem.sym] || 0)) return;
-      state.balance += amt;
-      state.portfolio[state.activeGem.sym] -= qty;
-    }
-    
-    state.history.push({ time: new Date().toLocaleTimeString(), action: state.side, asset: state.activeGem.sym, amt: amt, price: state.activeGem.price });
-    document.getElementById('total-balance').innerText = "$" + state.balance.toLocaleString();
-    renderHistory();
-    syncUI();
-  }
-
-  function renderHistory() {
-    const body = document.getElementById('h-body');
-    body.innerHTML = state.history.slice(-5).map(h => `<tr><td>${h.time}</td><td class="${h.action === 'buy' ? 'text-up' : 'text-down'}">${h.action.toUpperCase()}</td><td>${h.asset}</td><td>${h.amt.toFixed(2)}</td><td>${h.price.toFixed(2)}</td><td class="text-up">FILLED</td></tr>`).reverse().join('');
   }
 
   init();
