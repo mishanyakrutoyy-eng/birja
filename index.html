@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>GemStock | Pro Terminal Peak</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    :root {
+      --bg: #08090a;
+      --panel: #111214;
+      --accent: #007AFF;
+      --text: #ffffff;
+      --text-dim: #5f6368;
+      --up: #0ecb81;
+      --down: #f6465d;
+      --border: #1e2023;
+      --radius: 12px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Outfit', sans-serif; }
+    body { background: var(--bg); color: var(--text); overflow: hidden; height: 100vh; font-size: 14px; }
+    
+    .ticker-wrap { 
+      height: 35px; background: var(--panel); border-bottom: 1px solid var(--border); 
+      display: flex; align-items: center; overflow: hidden; white-space: nowrap;
+    }
+    .ticker-move { display: inline-block; animation: ticker 30s linear infinite; }
+    @keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+    .ticker-item { display: inline-block; margin-right: 40px; font-family: 'JetBrains Mono'; font-size: 12px; }
+
+    .app-container { display: grid; grid-template-columns: 80px 1fr 320px; height: calc(100vh - 35px); }
+
+    nav { border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; padding: 20px 0; }
+    .nav-icon { width: 45px; height: 45px; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: var(--text-dim); margin-bottom: 20px; cursor: pointer; transition: 0.3s; }
+    .nav-icon:hover, .nav-icon.active { color: var(--accent); background: rgba(0,122,255,0.1); }
+
+    .main-content { display: grid; grid-template-rows: 1fr 250px; border-right: 1px solid var(--border); overflow: hidden; }
+    .trading-view { display: grid; grid-template-columns: 1fr 300px; }
+    
+    .chart-area { padding: 20px; border-right: 1px solid var(--border); position: relative; display: flex; flex-direction: column; }
+    #candleChart { flex: 1; width: 100%; margin-top: 10px; cursor: crosshair; }
+
+    .order-book { padding: 15px; font-family: 'JetBrains Mono'; font-size: 12px; overflow: hidden; }
+    .ob-row { display: grid; grid-template-columns: 1fr 1fr 1fr; padding: 3px 0; position: relative; }
+    .ob-bg-up { position: absolute; right: 0; top: 0; bottom: 0; background: rgba(14,203,129,0.1); z-index: -1; }
+    .ob-bg-down { position: absolute; right: 0; top: 0; bottom: 0; background: rgba(246,70,93,0.1); z-index: -1; }
+
+    .execution-panel { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+    .wallet-info { background: var(--panel); padding: 15px; border-radius: var(--radius); border: 1px solid var(--border); }
+    .trade-tabs { display: flex; background: var(--bg); border-radius: 8px; padding: 4px; }
+    .t-tab { flex: 1; text-align: center; padding: 8px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; }
+    .t-tab.active.buy { background: var(--up); color: white; }
+    .t-tab.active.sell { background: var(--down); color: white; }
+
+    .input-group { position: relative; margin-top: 15px; }
+    .input-group label { font-size: 11px; color: var(--text-dim); position: absolute; top: -8px; left: 10px; background: var(--bg); padding: 0 5px; z-index: 1; }
+    .input-group input { width: 100%; background: transparent; border: 1px solid var(--border); padding: 15px; border-radius: 8px; color: white; outline: none; font-family: 'JetBrains Mono'; }
+    .input-group input:focus { border-color: var(--accent); }
+
+    .exec-btn { width: 100%; padding: 18px; border-radius: 8px; border: none; font-weight: 800; cursor: pointer; margin-top: 10px; text-transform: uppercase; }
+
+    .history-area { border-top: 1px solid var(--border); padding: 20px; overflow-y: auto; }
+    .h-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .h-table th { text-align: left; color: var(--text-dim); padding-bottom: 10px; }
+    .h-table td { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.02); }
+
+    .text-up { color: var(--up); }
+    .text-down { color: var(--down); }
+  </style>
+</head>
+<body>
+
+<div class="ticker-wrap">
+  <div class="ticker-move" id="ticker-content"></div>
+</div>
+
+<div class="app-container">
+  <nav>
+    <div class="nav-icon active"><i class="fas fa-chart-bar"></i></div>
+    <div class="nav-icon"><i class="fas fa-wallet"></i></div>
+    <div class="nav-icon"><i class="fas fa-exchange-alt"></i></div>
+    <div class="nav-icon" style="margin-top: auto;"><i class="fas fa-cog"></i></div>
+  </nav>
+
+  <div class="main-content">
+    <div class="trading-view">
+      <div class="chart-area">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h1 id="curr-name" style="font-size: 1.5rem; font-weight: 800;">GEM/USDT</h1>
+            <span id="curr-price" class="text-up" style="font-size: 1.2rem; font-family: 'JetBrains Mono'; font-weight: 700;">0.0000</span>
+          </div>
+          <div style="text-align: right; font-family: 'JetBrains Mono';">
+            <div style="color: var(--text-dim); font-size: 10px;">Volatility Mode</div>
+            <div id="v-status" class="text-up">ACTIVE 15%</div>
+          </div>
+        </div>
+        <canvas id="candleChart"></canvas>
+      </div>
+
+      <div class="order-book">
+        <div style="color: var(--text-dim); font-weight: 700; margin-bottom: 15px;">ORDER BOOK</div>
+        <div id="ob-asks" style="margin-bottom: 10px;"></div>
+        <div id="ob-mid" style="padding: 10px 0; font-weight: 800; font-size: 14px; text-align: center; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin: 5px 0;"></div>
+        <div id="ob-bids"></div>
+      </div>
+    </div>
+
+    <div class="history-area">
+      <div style="font-weight: 700; margin-bottom: 15px;">TRADE HISTORY</div>
+      <table class="h-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Asset</th>
+            <th>Amount</th>
+            <th>Price</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="h-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="execution-panel">
+    <div class="wallet-info">
+      <div style="color: var(--text-dim); font-size: 11px; margin-bottom: 5px;">ESTIMATED BALANCE</div>
+      <div id="total-balance" style="font-size: 1.5rem; font-weight: 800;">$10,000.00</div>
+      <div id="owned-qty" style="font-size: 11px; color: var(--accent); margin-top: 5px;">Vault: 0.000000 units</div>
+    </div>
+
+    <div class="trade-box">
+      <div class="trade-tabs">
+        <div class="t-tab active buy" onclick="setSide('buy', this)">BUY</div>
+        <div class="t-tab sell" onclick="setSide('sell', this)">SELL</div>
+      </div>
+
+      <div class="input-group">
+        <label>ORDER TYPE</label>
+        <input type="text" value="MARKET" disabled>
+      </div>
+
+      <div class="input-group">
+        <label>AMOUNT (USDT)</label>
+        <input type="number" id="trade-amount" placeholder="0.00" oninput="calcQty()">
+      </div>
+
+      <div style="margin-top: 20px; font-size: 12px; display: flex; justify-content: space-between;">
+        <span style="color: var(--text-dim);">Execution Qty:</span>
+        <span id="exec-qty" style="font-weight: 700;">0.000000</span>
+      </div>
+      
+      <button id="exec-btn" class="exec-btn" style="background: var(--up); color: white;" onclick="execute()">Buy GEM</button>
+    </div>
+
+    <div style="margin-top: auto; border-top: 1px solid var(--border); padding-top: 20px;">
+      <div style="color: var(--text-dim); font-size: 11px; margin-bottom: 10px;">CHOOSE ASSET</div>
+      <div id="asset-selector" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let state = {
+    balance: 10000.00,
+    side: 'buy',
+    activeGem: null,
+    portfolio: {},
+    history: []
+  };
+
+  const gems = [
+    { name: 'Gemcoin', sym: 'GEM', price: 250.40, ch: 2.4, candles: [] },
+    { name: 'Aether', sym: 'AET', price: 42.10, ch: -0.8, candles: [] },
+    { name: 'Solstice', sym: 'SOL', price: 89.20, ch: 1.1, candles: [] },
+    { name: 'Nebula', sym: 'NEB', price: 0.0054, ch: 18.2, candles: [] }
+  ];
+
+  // Инициализация свечей для каждого актива
+  gems.forEach(g => {
+    let base = g.price;
+    for(let i=0; i<50; i++) {
+      let o = base + (Math.random()-0.5)*(base*0.02);
+      let c = o + (Math.random()-0.5)*(base*0.03);
+      g.candles.push({ open: o, close: c, high: Math.max(o,c)+Math.random()*(base*0.01), low: Math.min(o,c)-Math.random()*(base*0.01) });
+      base = c;
+    }
+  });
+
+  const canvas = document.getElementById('candleChart');
+  const ctx = canvas.getContext('2d');
+
+  function init() {
+    state.activeGem = gems[0];
+    renderAssets();
+    updateTicker();
+    setInterval(marketLogic, 2500);
+    startChartEngine();
+  }
+
+  function marketLogic() {
+    gems.forEach(g => {
+      const volatility = (Math.random() - 0.5) * 0.3; // ±15%
+      const open = g.price;
+      g.price += (g.price * volatility);
+      g.ch += (volatility * 100);
+      const close = g.price;
+      
+      g.candles.push({
+        open: open, close: close,
+        high: Math.max(open, close) + (Math.random() * (open * 0.01)),
+        low: Math.min(open, close) - (Math.random() * (open * 0.01))
+      });
+      if(g.candles.length > 60) g.candles.shift();
+    });
+    
+    if (state.activeGem) {
+      document.getElementById('curr-price').innerText = state.activeGem.price.toFixed(state.activeGem.price < 1 ? 6 : 2);
+      document.getElementById('curr-price').className = state.activeGem.ch >= 0 ? 'text-up' : 'text-down';
+      document.getElementById('owned-qty').innerText = `Vault: ${(state.portfolio[state.activeGem.sym] || 0).toFixed(6)} units`;
+    }
+    
+    renderOrderBook();
+    updateTicker();
+    renderAssets();
+  }
+
+  function startChartEngine() {
+    function draw() {
+      if(!state.activeGem) return;
+      canvas.width = canvas.parentElement.clientWidth * 2;
+      canvas.height = canvas.parentElement.clientHeight * 0.8 * 2;
+      ctx.scale(2, 2);
+      
+      const w = canvas.width / 2;
+      const h = canvas.height / 2;
+      const data = state.activeGem.candles;
+      const min = Math.min(...data.map(c => c.low)) * 0.99;
+      const max = Math.max(...data.map(c => c.high)) * 1.01;
+      const range = max - min;
+
+      ctx.clearRect(0,0,w,h);
+      const candleW = (w / data.length) * 0.7;
+      const gap = (w / data.length) * 0.3;
+
+      data.forEach((c, i) => {
+        const x = i * (candleW + gap);
+        const yOpen = h - ((c.open - min) / range) * h;
+        const yClose = h - ((c.close - min) / range) * h;
+        const yHigh = h - ((c.high - min) / range) * h;
+        const yLow = h - ((c.low - min) / range) * h;
+
+        ctx.strokeStyle = c.close >= c.open ? '#0ecb81' : '#f6465d';
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.lineWidth = 1;
+
+        ctx.beginPath();
+        ctx.moveTo(x + candleW/2, yHigh);
+        ctx.lineTo(x + candleW/2, yLow);
+        ctx.stroke();
+        ctx.fillRect(x, Math.min(yOpen, yClose), candleW, Math.max(Math.abs(yClose - yOpen), 1));
+      });
+      requestAnimationFrame(draw);
+    }
+    draw();
+  }
+
+  function renderOrderBook() {
+    const asks = document.getElementById('ob-asks');
+    const bids = document.getElementById('ob-bids');
+    let askHtml = '', bidHtml = '';
+    
+    for(let i=0; i<7; i++) {
+      const pAsk = state.activeGem.price * (1 + (i+1)*0.001);
+      const pBid = state.activeGem.price * (1 - (i+1)*0.001);
+      const size = (Math.random() * 1.5).toFixed(3);
+      
+      askHtml = `<div class="ob-row text-down"><div class="ob-bg-down" style="width: ${size*40}%"></div><span>${pAsk.toFixed(4)}</span><span>${size}</span><span style="text-align:right">${(pAsk*size).toFixed(2)}</span></div>` + askHtml;
+      bidHtml += `<div class="ob-row text-up"><div class="ob-bg-up" style="width: ${size*40}%"></div><span>${pBid.toFixed(4)}</span><span>${size}</span><span style="text-align:right">${(pBid*size).toFixed(2)}</span></div>`;
+    }
+    asks.innerHTML = askHtml;
+    bids.innerHTML = bidHtml;
+    document.getElementById('ob-mid').innerText = state.activeGem.price.toFixed(4);
+  }
+
+  function renderAssets() {
+    const container = document.getElementById('asset-selector');
+    container.innerHTML = gems.map(g => `
+      <div onclick="selectGem('${g.sym}')" style="background: var(--panel); padding: 10px; border-radius: 8px; border: 1px solid ${state.activeGem.sym === g.sym ? 'var(--accent)' : 'var(--border)'}; cursor: pointer;">
+        <div style="font-weight: 800; font-size: 12px;">${g.sym}/USDT</div>
+        <div class="${g.ch >= 0 ? 'text-up' : 'text-down'}" style="font-size: 10px;">${g.ch.toFixed(2)}%</div>
+      </div>
+    `).join('');
+  }
+
+  function selectGem(sym) {
+    state.activeGem = gems.find(g => g.sym === sym);
+    document.getElementById('curr-name').innerText = state.activeGem.sym + "/USDT";
+    document.getElementById('exec-btn').innerText = (state.side === 'buy' ? 'Buy ' : 'Sell ') + state.activeGem.sym;
+    renderAssets();
+    calcQty();
+  }
+
+  function setSide(s, el) {
+    state.side = s;
+    document.querySelectorAll('.t-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    const btn = document.getElementById('exec-btn');
+    btn.style.background = s === 'buy' ? 'var(--up)' : 'var(--down)';
+    btn.innerText = (s === 'buy' ? 'Buy ' : 'Sell ') + state.activeGem.sym;
+    calcQty();
+  }
+
+  function calcQty() {
+    const amt = parseFloat(document.getElementById('trade-amount').value) || 0;
+    document.getElementById('exec-qty').innerText = (amt / state.activeGem.price).toFixed(6);
+  }
+
+  function execute() {
+    const amt = parseFloat(document.getElementById('trade-amount').value);
+    if (!amt) return;
+
+    if (state.side === 'buy') {
+      if (amt > state.balance) return alert("Insufficient balance");
+      state.balance -= amt;
+      state.portfolio[state.activeGem.sym] = (state.portfolio[state.activeGem.sym] || 0) + (amt / state.activeGem.price);
+    } else {
+      const owned = state.portfolio[state.activeGem.sym] || 0;
+      const sellQty = amt / state.activeGem.price;
+      if (sellQty > owned) return alert("Not enough assets to sell");
+      state.balance += amt;
+      state.portfolio[state.activeGem.sym] -= sellQty;
+    }
+
+    state.history.push({
+      time: new Date().toLocaleTimeString(),
+      side: state.side,
+      sym: state.activeGem.sym,
+      amt: amt,
+      price: state.activeGem.price
+    });
+
+    document.getElementById('total-balance').innerText = "$" + state.balance.toLocaleString(undefined, {minimumFractionDigits: 2});
+    renderHistory();
+    document.getElementById('trade-amount').value = '';
+    calcQty();
+  }
+
+  function renderHistory() {
+    const body = document.getElementById('h-body');
+    body.innerHTML = state.history.slice(-10).map(h => `
+      <tr>
+        <td>${h.time}</td>
+        <td class="${h.side === 'buy' ? 'text-up' : 'text-down'}">${h.side.toUpperCase()}</td>
+        <td style="font-weight: 700;">${h.sym}</td>
+        <td style="font-family: 'JetBrains Mono';">${h.amt.toFixed(2)}</td>
+        <td style="font-family: 'JetBrains Mono';">${h.price.toFixed(4)}</td>
+        <td class="text-up">Filled</td>
+      </tr>
+    `).reverse().join('');
+  }
+
+  function updateTicker() {
+    const ticker = document.getElementById('ticker-content');
+    const content = gems.map(g => `<span class="ticker-item"><span style="color:var(--text-dim)">${g.sym}</span> <span class="${g.ch >= 0 ? 'text-up' : 'text-down'}">${g.price.toFixed(2)} (${g.ch.toFixed(1)}%)</span></span>`).join('');
+    ticker.innerHTML = content + content;
+  }
+
+  init();
+</script>
+</body>
+</html>
